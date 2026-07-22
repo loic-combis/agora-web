@@ -90,6 +90,7 @@ export async function listTags(limit = 50, cursor?: string): Promise<HistoryPage
       tag: node.name,
       date: commit.committedDate,
       sha: commit.oid,
+      message: commit.message,
       summary: summarize(parseCommitMessage(commit.message)),
     });
   }

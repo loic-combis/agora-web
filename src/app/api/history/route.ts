@@ -1,14 +1,18 @@
 import { listTags } from "@/lib/github";
-import { errorResponse, json } from "@/lib/http";
+import { NextRequest, NextResponse } from "next/server";
 
-// GET /api/history?limit=&cursor=  → paginated tag list with parsed summaries.
-export async function GET(request: Request) {
+// Client-side pagination for the History timeline. Server Components call
+// `listTags` directly; the client "Load more" goes through here.
+export async function GET(request: NextRequest) {
+  const { searchParams } = request.nextUrl;
+  const cursor = searchParams.get("cursor") ?? undefined;
+  const limit = Number(searchParams.get("limit") ?? 100);
+
   try {
-    const { searchParams } = new URL(request.url);
-    const limit = Math.min(Number(searchParams.get("limit")) || 50, 100);
-    const cursor = searchParams.get("cursor") ?? undefined;
-    return json(await listTags(limit, cursor), "history");
-  } catch (err) {
-    return errorResponse(err);
+    const page = await listTags(limit, cursor);
+    return NextResponse.json(page);
+  } catch {
+    // Token-resilient: mirror the SSR path's empty state instead of 500-ing.
+    return NextResponse.json({ entries: [], nextCursor: null });
   }
 }

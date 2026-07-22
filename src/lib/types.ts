@@ -36,6 +36,7 @@ export interface HistoryEntry {
   tag: string; // YYYY-MM-DD
   date: string; // committedDate ISO
   sha: string;
+  message: string; // raw commit message
   summary: {
     texts: number;
     in: number;
