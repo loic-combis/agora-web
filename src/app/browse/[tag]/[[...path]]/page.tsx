@@ -27,6 +27,15 @@ function href(tag: string, segments: string[]): string {
   return encoded ? `/browse/${tag}/${encoded}` : `/browse/${tag}`;
 }
 
+/** Decode a route segment; tolerant of already-decoded values and bad escapes. */
+function decodeSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
 function isFile(segments: string[]): boolean {
   return segments.at(-1)?.endsWith(".md") ?? false;
 }
@@ -36,7 +45,7 @@ export async function generateMetadata({
 }: PageProps<"/browse/[tag]/[[...path]]">): Promise<Metadata> {
   const { tag, path = [] } = await params;
   const last = path.at(-1);
-  const where = last ? prettyName(last) : "toutes les catégories";
+  const where = last ? prettyName(decodeSegment(last)) : "toutes les catégories";
   return {
     title: `${where} — ${formatDate(tag)}`,
     description: `Contenu du droit français applicable au ${formatDate(tag)} : ${where}.`,
@@ -113,7 +122,11 @@ function DirListing({ tag, entries, depth }: { tag: string; entries: TreeEntry[]
 }
 
 export default async function BrowsePage({ params }: PageProps<"/browse/[tag]/[[...path]]">) {
-  const { tag, path = [] } = await params;
+  const { tag, path: rawPath = [] } = await params;
+  // Next.js hands back the raw (still percent-encoded) catch-all segments, so we
+  // decode them before hitting GitHub — otherwise Octokit re-encodes the `%` and
+  // GitHub 404s on the double-encoded path.
+  const path = rawPath.map(decodeSegment);
   const joined = path.join("/");
 
   if (isFile(path)) {
