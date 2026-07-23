@@ -1,4 +1,4 @@
-import type { ActRef, DayChangeset, TextChange } from "./types";
+import type { ActRef, ArticleRef, DayChangeset, TextChange } from "./types";
 
 const DATE_RE = /^APPLICABLE LAW AS OF (\d{4}-\d{2}-\d{2})/;
 const COAUTHOR_RE = /^Co-authored-by:\s*(.+?)\s*<([^>]+)>\s*$/;
@@ -69,6 +69,31 @@ export function parseCommitMessage(message: string): DayChangeset {
   }
 
   return cs;
+}
+
+/**
+ * Split a record's article transitions into three buckets: articles that only
+ * entered (added), only left (removed), and those present on both sides — i.e.
+ * edited.
+ *
+ * Keyed on `title` (the article number, e.g. "Article 45"), NOT `legiarti`:
+ * Légifrance versions are per-`legiarti`, so editing an article closes its old
+ * version and opens a new one with a fresh `legiarti`. The same article thus
+ * appears in `left` (old version) and `entered` (new version) with the same
+ * title but different ids. The edited entry links to the new (entered) version.
+ */
+export function partitionArticles(record: TextChange): {
+  entered: ArticleRef[];
+  left: ArticleRef[];
+  edited: ArticleRef[];
+} {
+  const leftTitles = new Set(record.left.map((a) => a.title));
+  const enteredTitles = new Set(record.entered.map((a) => a.title));
+  return {
+    entered: record.entered.filter((a) => !leftTitles.has(a.title)),
+    left: record.left.filter((a) => !enteredTitles.has(a.title)),
+    edited: record.entered.filter((a) => leftTitles.has(a.title)),
+  };
 }
 
 /** Compact counts for the history table. */
