@@ -2,66 +2,212 @@
 
 import { Button } from "@/components/ui/button";
 import { parseCommitMessage, partitionArticles } from "@/lib/parse-commit";
-import { ArticleRef, HistoryEntry, HistoryPage } from "@/lib/types";
+import { slugifyName } from "@/lib/slug";
+import { ArticleRef, HistoryEntry, HistoryPage, TextChange } from "@/lib/types";
 import {
   BanIcon,
   CheckmarkCircle03Icon,
   Certificate01Icon,
   Loading03Icon,
-  PencilEdit02Icon,
+  Edit01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
-import { useMemo, useRef, useState, useTransition } from "react";
+import Link from "next/link";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 
-// One labelled row of article links (added / removed / edited) under a text.
-// The leading icon never shrinks and stays pinned to the first wrapped line.
+// A labelled row (optional leading icon + inline, wrapping content) that clamps to
+// two lines by default and reveals a muted "Voir plus / Voir moins" toggle only
+// when the content actually overflows. The icon never shrinks and pins to the top.
+function CollapsibleRow({
+  icon,
+  iconClassName,
+  contentClassName,
+  children,
+}: {
+  icon?: typeof CheckmarkCircle03Icon;
+  iconClassName?: string;
+  contentClassName?: string;
+  children: React.ReactNode;
+}) {
+  const contentRef = useRef<HTMLSpanElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [clampable, setClampable] = useState(false);
+
+  // `scrollHeight` reports the full content height whether or not it is clamped,
+  // so comparing it to two line-heights tells us if the toggle is needed — in
+  // either state, and on width changes (via the ResizeObserver).
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+    const measure = () => {
+      const lh = parseFloat(getComputedStyle(el).lineHeight) || 16;
+      setClampable(el.scrollHeight > lh * 2 + 2);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  return (
+    <span className="flex gap-2 items-start">
+      {icon && (
+        <HugeiconsIcon
+          icon={icon}
+          size={14}
+          strokeWidth={2}
+          aria-hidden
+          className={`shrink-0 mt-0.5 ${iconClassName ?? ""}`}
+        />
+      )}
+
+      <span className="flex flex-col gap-0.5 min-w-0 flex-1 items-start">
+        <span
+          ref={contentRef}
+          className={`text-xs ${contentClassName ?? ""} ${
+            expanded ? "" : "line-clamp-2"
+          }`}
+        >
+          {children}
+        </span>
+
+        {clampable && (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="text-[11px] text-muted-foreground hover:underline"
+          >
+            {expanded ? "Voir moins" : "Voir plus"}
+          </button>
+        )}
+      </span>
+    </span>
+  );
+}
+
+// One labelled row of article links (added / removed / edited) under a text,
+// rendered inline so it can clamp to two lines. Each article links to the day's
+// diff for its text, anchored to the article (by CID = its file in the diff).
 function ArticleList({
   icon,
   iconClassName,
   listClassName,
+  date,
+  legitext,
   articles,
 }: {
   icon: typeof CheckmarkCircle03Icon;
   iconClassName: string;
   listClassName?: string;
+  date: string;
+  legitext: string;
   articles: ArticleRef[];
 }) {
   if (articles.length === 0) return null;
   return (
-    <span className="flex gap-2 items-start">
-      <HugeiconsIcon
-        icon={icon}
-        size={14}
-        strokeWidth={2}
-        aria-hidden
-        className={`shrink-0 mt-0.5 ${iconClassName}`}
-      />
+    <CollapsibleRow
+      icon={icon}
+      iconClassName={iconClassName}
+      contentClassName={listClassName}
+    >
+      {articles.map((art, index) => (
+        <span key={art.legiarti}>
+          <Link
+            href={`/compare/${date}/${legitext}#${art.cid}`}
+            className="hover:underline"
+          >
+            {art.title}
+          </Link>
+          {index < articles.length - 1 ? ", " : ""}
+        </span>
+      ))}
+    </CollapsibleRow>
+  );
+}
 
-      <ul className={`flex gap-1 flex-wrap ${listClassName ?? ""}`}>
-        {articles.map((art, index) => {
-          const isLast = index === articles.length - 1;
-          return (
-            <li
-              key={art.legiarti}
-              className="text-xs flex items-center gap-1"
-            >
-              <a
-                href={
-                  "https://www.legifrance.gouv.fr/codes/article_lc/" +
-                  art.legiarti
-                }
-                target="_blank"
-                className="hover:underline"
-              >
-                {art.title + (isLast ? "" : ",")}
-              </a>
-            </li>
-          );
-        })}
-      </ul>
-    </span>
+// The day's signatories as links to their person page. Names keep their accents
+// (they come straight from the commit text); the slug is derived with the same
+// rule the replay used to sign commits, so the link resolves to every commit the
+// person is tied to.
+function SignerList({ signers }: { signers: string[] }) {
+  if (signers.length === 0) return null;
+  return (
+    <CollapsibleRow contentClassName="text-muted-foreground">
+      {signers.map((name, index) => (
+        <span key={`${name}-${index}`}>
+          <Link
+            href={`/persons/${slugifyName(name)}`}
+            className="hover:underline"
+          >
+            {name}
+          </Link>
+          {index < signers.length - 1 ? ", " : ""}
+        </span>
+      ))}
+    </CollapsibleRow>
+  );
+}
+
+// One text's changes on a given day: a card (title → the day's diff for this text,
+// its article transitions, its signatories) with two small muted links underneath.
+function TextCard({ date, record }: { date: string; record: TextChange }) {
+  const { entered, left, edited } = partitionArticles(record);
+  return (
+    <div className="flex flex-col gap-1 w-full">
+      <div className="border rounded-lg p-4 flex flex-col gap-1">
+        <Link
+          href={`/compare/${date}/${record.legitext}`}
+          className="hover:underline font-semibold text-sm"
+        >
+          {record.name}
+        </Link>
+
+        <ArticleList
+          icon={CheckmarkCircle03Icon}
+          iconClassName="text-green-500"
+          date={date}
+          legitext={record.legitext}
+          articles={entered}
+        />
+        <ArticleList
+          icon={Edit01Icon}
+          iconClassName="text-amber-500"
+          date={date}
+          legitext={record.legitext}
+          articles={edited}
+        />
+        <ArticleList
+          icon={BanIcon}
+          iconClassName="text-red-500"
+          listClassName="line-through"
+          date={date}
+          legitext={record.legitext}
+          articles={left}
+        />
+
+        <SignerList signers={record.signers} />
+      </div>
+
+      <div className="flex gap-2 px-1">
+        <Link
+          href={`/history/texts/${record.legitext}`}
+          className="text-[11px] text-muted-foreground hover:underline"
+        >
+          Voir les Versions
+        </Link>
+        <a
+          href={
+            "https://www.legifrance.gouv.fr/codes/texte_lc/" + record.legitext
+          }
+          target="_blank"
+          className="text-[11px] text-muted-foreground hover:underline"
+        >
+          Voir sur Légifrance
+        </a>
+      </div>
+    </div>
   );
 }
 
@@ -98,72 +244,27 @@ export default function HistoryFeed({
 
   return (
     <>
-      <div className="relative flex w-full justify-center border-l-2">
-        <ul className="flex flex-col gap-8 w-full">
+      <div className="flex w-full">
+        <ul className="flex flex-col gap-10 w-full">
           {entries.map((entry, index) => (
-            <li
-              key={entry.tag}
-              className="flex flex-col gap-2 bg-background w-full"
-            >
-              <span className="flex gap-2 relative items-center text-muted-foreground">
-                <span className="absolute -translate-x-1/2 p-2 bg-background">
-                  <HugeiconsIcon
-                    icon={Certificate01Icon}
-                    size={18}
-                    strokeWidth={1.5}
-                    aria-hidden
-                  />
-                </span>
-
-                <span className="pl-6 text-md capitalize">
+            <li key={entry.tag} className="flex flex-col gap-3 w-full">
+              <div className="flex items-center justify-center gap-2 text-muted-foreground">
+                <Link
+                  href={`/compare/${entry.tag}`}
+                  className="text-sm capitalize hover:underline italic"
+                >
                   {format(entry.date, "EEEE d MMMM yyyy", { locale: fr })}
-                </span>
-              </span>
+                </Link>
+              </div>
 
-              <div className="flex flex-col pl-6">
-                <div className="border rounded-lg p-4 flex flex-col">
-                  <ul className="flex flex-col gap-4">
-                    {parsedMessages[index].records.map((record) => {
-                      const { entered, left, edited } =
-                        partitionArticles(record);
-                      return (
-                        <li
-                          key={record.legitext}
-                          className="flex flex-col gap-1"
-                        >
-                          <a
-                            href={
-                              "https://www.legifrance.gouv.fr/codes/texte_lc/" +
-                              record.legitext
-                            }
-                            target="_blank"
-                            className="hover:underline font-semibold text-sm"
-                          >
-                            {record.name}
-                          </a>
-                          <span className="font-semibold"></span>
-
-                          <ArticleList
-                            icon={CheckmarkCircle03Icon}
-                            iconClassName="text-green-500"
-                            articles={entered}
-                          />
-                          <ArticleList
-                            icon={PencilEdit02Icon}
-                            iconClassName="text-amber-500"
-                            articles={edited}
-                          />
-                          <ArticleList
-                            icon={BanIcon}
-                            iconClassName="text-red-500"
-                            listClassName="line-through"
-                            articles={left}
-                          />
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
+              <div className="flex flex-col gap-4">
+                {parsedMessages[index].records.map((record) => (
+                  <TextCard
+                    key={record.legitext}
+                    date={entry.tag}
+                    record={record}
+                  />
+                ))}
               </div>
             </li>
           ))}

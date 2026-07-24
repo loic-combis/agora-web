@@ -2,7 +2,8 @@
 
 /** An article transition within a text on a given day. */
 export interface ArticleRef {
-  legiarti: string;
+  legiarti: string; // the point-in-time version id
+  cid: string; // the stable article id — the `<CID>.md` file name / diff anchor
   title: string; // e.g. "Article 45"
 }
 

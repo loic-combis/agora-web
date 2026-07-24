@@ -1,5 +1,15 @@
 import { Scaffold } from "@/components/scaffold";
 
-export default function LawPage() {
-  return <Scaffold>Law Page</Scaffold>;
+const breadcrumbs = [{ label: "Loi", href: "/law" }];
+
+export default function LawPage({ children }: { children: React.ReactNode }) {
+  return (
+    <Scaffold
+      title="Loi"
+      subtitle="Loi Française applicable."
+      breadcrumbs={breadcrumbs}
+    >
+      {children}
+    </Scaffold>
+  );
 }

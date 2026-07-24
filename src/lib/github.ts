@@ -3,6 +3,7 @@
 // handlers (for client interactivity) — the single source of truth for GitHub I/O.
 import { Octokit } from "octokit";
 import { parseCommitMessage, summarize } from "./parse-commit";
+import { humanizeSlug, personEmail } from "./slug";
 import type {
   BlameRange,
   CommitDetail,
@@ -10,11 +11,25 @@ import type {
   DiffFile,
   HistoryEntry,
   HistoryPage,
+  TextChange,
   TreeEntry,
 } from "./types";
 
+/** One day this text changed: the tag date, the commit sha, its parsed record. */
+export interface TextHistoryEntry {
+  date: string;
+  sha: string;
+  record: TextChange;
+}
+
 export const OWNER = process.env.AGORA_REPO_OWNER ?? "loic-combis";
 export const REPO = process.env.AGORA_REPO_NAME ?? "agora-france";
+
+/** The genesis day (first ingested date). Its diff vs the empty INIT repo is the
+ *  whole corpus (~13k files) being created at once — not a real legislative change.
+ *  We hide it from the history feed and refuse its diff, so the UI never surfaces
+ *  that big-bang changeset. */
+export const GENESIS_TAG = "1970-01-01";
 
 let client: Octokit | null = null;
 /** Lazily-built singleton. Works unauthenticated for REST (60/hr); a PAT lifts
@@ -84,6 +99,7 @@ export async function listTags(limit = 50, cursor?: string): Promise<HistoryPage
   const refs = data.repository.refs;
   const entries: HistoryEntry[] = [];
   for (const node of refs.nodes) {
+    if (node.name === GENESIS_TAG) continue; // never surface the big-bang seed day
     const commit = commitOf(node.target);
     if (!commit) continue;
     entries.push({
@@ -104,6 +120,66 @@ export async function listTags(limit = 50, cursor?: string): Promise<HistoryPage
 export async function listTagNames(limit = 100): Promise<string[]> {
   const { entries } = await listTags(limit);
   return entries.map((e) => e.tag);
+}
+
+/**
+ * A text's version timeline (newest first): every day it changed. Found by
+ * searching commit messages for the LEGITEXT id — each day's message carries a
+ * `Text: <legitext> | …` block — then keeping the record for this text. Each entry
+ * links to that day's per-text diff (`/compare/:date/:text`).
+ */
+export async function listTextHistory(
+  legitext: string,
+): Promise<TextHistoryEntry[]> {
+  const res = await octokit().rest.search.commits({
+    q: `repo:${OWNER}/${REPO} "${legitext}"`,
+    sort: "committer-date",
+    order: "desc",
+    per_page: 100,
+  });
+  const out: TextHistoryEntry[] = [];
+  for (const item of res.data.items) {
+    const cs = parseCommitMessage(item.commit.message);
+    const record = cs.records.find((r) => r.legitext === legitext);
+    if (record) out.push({ date: cs.date, sha: item.sha, record });
+  }
+  return out;
+}
+
+// --- Persons --------------------------------------------------------------
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Best readable (accented) name for a signatory slug. The slug is ASCII-lossy, so
+ * we recover the true name from the commit metadata the replay baked the slug into:
+ * first as a commit *author* (the day's first signatory), then from a
+ * `Co-authored-by` trailer (a co-signer). Falls back to a humanised slug when the
+ * commit index has nothing (no token, search lag, or an unknown slug).
+ */
+export async function personDisplayName(slug: string): Promise<string> {
+  const email = personEmail(slug);
+  try {
+    const byAuthor = await octokit().rest.search.commits({
+      q: `repo:${OWNER}/${REPO} author-email:${email}`,
+      per_page: 1,
+    });
+    const authorName = byAuthor.data.items[0]?.commit.author?.name?.trim();
+    if (authorName) return authorName;
+
+    const byTrailer = await octokit().rest.search.commits({
+      q: `repo:${OWNER}/${REPO} "${email}"`,
+      per_page: 1,
+    });
+    const message = byTrailer.data.items[0]?.commit.message ?? "";
+    const m = new RegExp(
+      `Co-authored-by:\\s*(.+?)\\s*<${escapeRe(email)}>`,
+    ).exec(message);
+    if (m?.[1]) return m[1].trim();
+  } catch {
+    // Unauthenticated rate limits / unindexed commits: fall back below.
+  }
+  return humanizeSlug(slug);
 }
 
 // --- Commit detail + diff -------------------------------------------------
@@ -136,6 +212,10 @@ function hasNextPage(link?: string): boolean {
  * has ~13k files, so pages lazy-load further pages via the API route.
  */
 export async function getDay(tag: string, page = 1, perPage = 100): Promise<CommitDetail> {
+  if (tag === GENESIS_TAG) {
+    // Fail closed: the genesis diff is the entire seeded corpus, not browsable here.
+    throw new Error(`No diff available for the genesis day ${GENESIS_TAG}.`);
+  }
   const res = await octokit().rest.repos.getCommit({
     owner: OWNER,
     repo: REPO,

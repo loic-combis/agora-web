@@ -9,6 +9,16 @@ function splitPipe(value: string): [string, string] {
   return i === -1 ? [value.trim(), ""] : [value.slice(0, i).trim(), value.slice(i + 3).trim()];
 }
 
+// `In:`/`Out:` id part is "<version> (CID <cid>)".
+const ARTI_ID_RE = /^(\S+) \(CID (\S+)\)$/;
+
+/** Parse an `In:`/`Out:` value into a typed article reference. */
+function articleRef(value: string): ArticleRef {
+  const [idPart, title] = splitPipe(value);
+  const [, legiarti = idPart, cid = idPart] = ARTI_ID_RE.exec(idPart) ?? [];
+  return { legiarti, cid, title };
+}
+
 function actOf(cid: string, label: string): ActRef {
   return {
     cid,
@@ -45,13 +55,11 @@ export function parseCommitMessage(message: string): DayChangeset {
       continue;
     }
     if (line.startsWith("In: ") && current) {
-      const [legiarti, title] = splitPipe(line.slice(4));
-      current.entered.push({ legiarti, title });
+      current.entered.push(articleRef(line.slice(4)));
       continue;
     }
     if (line.startsWith("Out: ") && current) {
-      const [legiarti, title] = splitPipe(line.slice(5));
-      current.left.push({ legiarti, title });
+      current.left.push(articleRef(line.slice(5)));
       continue;
     }
     if (line.startsWith("Act: ") && current) {

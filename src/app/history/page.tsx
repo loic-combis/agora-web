@@ -12,15 +12,15 @@ async function loadHistory(): Promise<HistoryPageData> {
   }
 }
 
-const breadcrumbs = [{ label: "History", href: "/history" }];
+const breadcrumbs = [{ label: "Historique", href: "/history" }];
 
 export default async function HistoryPage() {
   const { entries, nextCursor } = await loadHistory();
   return (
     <Scaffold
-      title="History"
+      title="Historique des lois"
       breadcrumbs={breadcrumbs}
-      subtitle="List of all tags and their associated commit messages"
+      subtitle="Evolution des textes et articles de loi dans le temps."
     >
       <HistoryFeed initialEntries={entries} initialCursor={nextCursor} />
     </Scaffold>

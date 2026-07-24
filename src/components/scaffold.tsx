@@ -42,7 +42,7 @@ export function Scaffold({
                     />
                   </BreadcrumbLink>
                 </BreadcrumbItem>
-                <BreadcrumbSeparator />
+                {breadcrumbs.length > 0 && <BreadcrumbSeparator />}
                 {breadcrumbs.map(({ label, href }, i) => {
                   const isLast = i === breadcrumbs.length - 1;
 
